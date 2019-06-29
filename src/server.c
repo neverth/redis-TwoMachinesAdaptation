@@ -1529,6 +1529,7 @@ void initServerConfig(void) {
     changeReplicationId();
     clearReplicationId2();
     server.timezone = getTimeZone(); /* Initialized by tzset(). */
+    server.OnlyTwoIpMode = 0;
     server.configfile = NULL;
     server.executable = NULL;
     server.hz = server.config_hz = CONFIG_DEFAULT_HZ;
@@ -3860,9 +3861,13 @@ void loadDataFromDisk(void) {
     } else {
         rdbSaveInfo rsi = RDB_SAVE_INFO_INIT;
         if (rdbLoad(server.rdb_filename,&rsi) == C_OK) {
+            // rsi已经被填充
             serverLog(LL_NOTICE,"DB loaded from disk: %.3f seconds",
                 (float)(ustime()-start)/1000000);
-
+            serverLog(LL_WARNING,"(loadDataFromDisk)已经把rdb文件中复制id %s 取出但并未赋值",rsi.repl_id);
+            serverLog(LL_WARNING,"(loadDataFromDisk)已经把rdb文件中复制偏移量 %lld 取出但并未赋值",rsi.repl_offset);
+            
+            int flag_ly = 0;
             /* Restore the replication ID / offset from the RDB file. */
             if ((server.masterhost || (server.cluster_enabled && nodeIsSlave(server.cluster->myself)))&&
                 rsi.repl_id_is_set &&
@@ -3872,13 +3877,30 @@ void loadDataFromDisk(void) {
                  * in function rdbPopulateSaveInfo. */
                 rsi.repl_stream_db != -1)
             {
+                serverLog(LL_WARNING,"(loadDataFromDisk)进入官方的部分复制代码");
                 memcpy(server.replid,rsi.repl_id,sizeof(server.replid));
                 server.master_repl_offset = rsi.repl_offset;
+                serverLog(LL_WARNING,"(loadDataFromDisk)已经将从rdb文件中的复制id %s 赋值给 %d",server.replid, server.port);
+                serverLog(LL_WARNING,"(loadDataFromDisk)已经将从rdb文件中的复制偏移量 %lld 赋值给 %d",server.master_repl_offset,server.port);
+
                 /* If we are a slave, create a cached master from this
                  * information, in order to allow partial resynchronizations
                  * with masters. */
                 replicationCacheMasterUsingMyself();
                 selectDb(server.cached_master,rsi.repl_stream_db);
+                flag_ly = 1;
+            }
+            if (server.OnlyTwoIpMode && rsi.repl_id_is_set && 
+                rsi.repl_offset != -1 && rsi.repl_stream_db != -1 &&
+                flag_ly == 0){
+                    serverLog(LL_WARNING,"(loadDataFromDisk)进入OnlyTwoIpMode部分复制代码");
+                    memcpy(server.replid,rsi.repl_id,sizeof(server.replid));
+                    server.master_repl_offset = rsi.repl_offset;
+                    server.master_repl_offset = rsi.repl_offset;
+                    serverLog(LL_WARNING,"(loadDataFromDisk)已经将从rdb文件中的复制偏移量 %lld 赋值给 %d",server.master_repl_offset,server.port);
+                    serverLog(LL_WARNING,"(loadDataFromDisk)已经将从rdb文件中的复制偏移量 %lld 赋值给 %d",server.master_repl_offset,server.port);
+                    replicationCacheMasterUsingMyself();
+                    selectDb(server.cached_master,rsi.repl_stream_db);
             }
         } else if (errno != ENOENT) {
             serverLog(LL_WARNING,"Fatal error loading the DB: %s. Exiting.",strerror(errno));
@@ -4155,6 +4177,8 @@ int main(int argc, char **argv) {
     } else {
         serverLog(LL_WARNING, "Configuration loaded");
     }
+    if (server.OnlyTwoIpMode)
+        serverLog(LL_WARNING, "redis正在以 OnlyTwoIpMode");
 
     server.supervised = redisIsSupervised(server.supervised_mode);
     int background = server.daemonize && !server.supervised;

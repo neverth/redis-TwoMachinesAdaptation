@@ -1078,7 +1078,7 @@ int rdbSaveInfoAuxFields(rio *rdb, int flags, rdbSaveInfo *rsi) {
     if (rdbSaveAuxFieldStrInt(rdb,"ctime",time(NULL)) == -1) return -1;
     if (rdbSaveAuxFieldStrInt(rdb,"used-mem",zmalloc_used_memory()) == -1) return -1;
 
-    /* Handle saving options that generate aux fields. */
+    /* 处理生成辅助字段的保存选项。*/
     if (rsi) {
         if (rdbSaveAuxFieldStrInt(rdb,"repl-stream-db",rsi->repl_stream_db)
             == -1) return -1;
@@ -1086,6 +1086,9 @@ int rdbSaveInfoAuxFields(rio *rdb, int flags, rdbSaveInfo *rsi) {
             == -1) return -1;
         if (rdbSaveAuxFieldStrInt(rdb,"repl-offset",server.master_repl_offset)
             == -1) return -1;
+        serverLog(LL_DEBUG,"已经将repl-stream-db %d 写入rdb文件", rsi->repl_stream_db);
+        serverLog(LL_DEBUG,"已经将repl-id %s 写入rdb文件", server.replid);
+        serverLog(LL_DEBUG,"已经将repl-offset %lld 写入rdb文件", server.master_repl_offset);
     }
     if (rdbSaveAuxFieldStrInt(rdb,"aof-preamble",aof_preamble) == -1) return -1;
     return 1;
@@ -1266,7 +1269,7 @@ int rdbSave(char *filename, rdbSaveInfo *rsi) {
         return C_ERR;
     }
 
-    serverLog(LL_NOTICE,"DB saved on disk");
+    serverLog(LL_NOTICE,"rdb文件已经写入");
     server.dirty = 0;
     server.lastsave = time(NULL);
     server.lastbgsave_status = C_OK;
@@ -2066,6 +2069,9 @@ eoferr: /* unexpected end of file is handled here with a fatal exit */
  *
  * If you pass an 'rsi' structure initialied with RDB_SAVE_OPTION_INIT, the
  * loading code will fiil the information fields in the structure. */
+/*
+    如果传递一个初始化为 rdbsaveptioninit 的'rsi'结构，则加载代码将填充结构中的信息字段。
+*/
 int rdbLoad(char *filename, rdbSaveInfo *rsi) {
     FILE *fp;
     rio rdb;
@@ -2446,6 +2452,14 @@ void bgsaveCommand(client *c) {
  * pointer if the instance has a valid master client, otherwise NULL
  * is returned, and the RDB saving will not persist any replication related
  * information. */
+/*
+    填充用于在RDB文件中保留复制信息的rdbSaveInfo结构。 
+    目前，该结构显式仅包含主流中当前选定的DB，但是如果rdbSave *（）
+    系列函数接收到NULL rsi结构，则不会保存复制ID /偏移量。 
+    函数popultes'rsi'通常在调用者中进行堆栈分配，
+    如果实例具有有效的主客户端，则返回填充的指针，
+    否则返回NULL，并且RDB保存不会保留任何复制相关信息。
+ */
 rdbSaveInfo *rdbPopulateSaveInfo(rdbSaveInfo *rsi) {
     rdbSaveInfo rsi_init = RDB_SAVE_INFO_INIT;
     *rsi = rsi_init;
@@ -2457,6 +2471,16 @@ rdbSaveInfo *rdbPopulateSaveInfo(rdbSaveInfo *rsi) {
      * connects to us, the NULL repl_backlog will trigger a full
      * synchronization, at the same time we will use a new replid and clear
      * replid2. */
+    /*
+        如果实例是master，我们可以填充复制信息
+        如果repl_backlog为NULL，
+        这意味着该master不在任何复制链中。 在这
+        场景复制信息是无用的，因为当一个slave
+        连接到我们，NULL repl_backlog将触发一个完整的
+        同步，同时我们将使用新的replid并清除
+        replid2。
+     */
+    // server.masterhost存在也代表这是一个slave,此处只不是slave
     if (!server.masterhost && server.repl_backlog) {
         /* Note that when server.slaveseldb is -1, it means that this master
          * didn't apply any write commands after a full synchronization.
@@ -2469,6 +2493,7 @@ rdbSaveInfo *rdbPopulateSaveInfo(rdbSaveInfo *rsi) {
 
     /* If the instance is a slave we need a connected master
      * in order to fetch the currently selected DB. */
+    // server.master存在代表这是一个slave
     if (server.master) {
         rsi->repl_stream_db = server.master->db->id;
         return rsi;
@@ -2481,6 +2506,11 @@ rdbSaveInfo *rdbPopulateSaveInfo(rdbSaveInfo *rsi) {
      * is valid. */
     if (server.cached_master) {
         rsi->repl_stream_db = server.cached_master->db->id;
+        return rsi;
+    }
+    if (server.OnlyTwoIpMode){
+        rsi->repl_stream_db = server.slaveseldb == -1 ? 0 : server.slaveseldb;
+        serverLog(LL_WARNING,"(rdbPopulateSaveInfo)正准备将复制信息写入rdb，选择的db为 %d", rsi->repl_stream_db);
         return rsi;
     }
     return NULL;

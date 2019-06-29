@@ -216,6 +216,10 @@ void loadServerConfigFromString(char *config) {
             if ((server.protected_mode = yesnotoi(argv[1])) == -1) {
                 err = "argument must be 'yes' or 'no'"; goto loaderr;
             }
+        } else if (!strcasecmp(argv[0],"OnlyTwoIpMode") && argc == 2) {
+            if ((server.OnlyTwoIpMode = yesnotoi(argv[1])) == -1) {
+                err = "argument must be 'yes' or 'no'"; goto loaderr;
+            }
         } else if (!strcasecmp(argv[0],"port") && argc == 2) {
             server.port = atoi(argv[1]);
             if (server.port < 0 || server.port > 65535) {
@@ -2030,6 +2034,7 @@ void rewriteConfigRemoveOrphaned(struct rewriteConfigState *state) {
             serverLog(LL_DEBUG,"Not rewritten option: %s", option);
             continue;
         }
+        serverLog(LL_DEBUG,"Already rewritten option: %s", option);
 
         while(listLength(l)) {
             listNode *ln = listFirst(l);

@@ -446,6 +446,9 @@ int replicationSetupSlaveForFullResync(client *slave, long long offset) {
  * On success return C_OK, otherwise C_ERR is returned and we proceed
  * with the usual full resync. */
 int masterTryPartialResynchronization(client *c) {
+
+    serverLog(LL_DEBUG,"尝试进行 PSYNC");
+
     long long psync_offset, psync_len;
     char *master_replid = c->argv[1]->ptr;
     char buf[128];
@@ -454,39 +457,81 @@ int masterTryPartialResynchronization(client *c) {
     /* Parse the replication offset asked by the slave. Go to full sync
      * on parse error: this should never happen but we try to handle
      * it in a robust way compared to aborting. */
+    // getLongLongFromObjectOrReply 取出 psync_offset 参数
     if (getLongLongFromObjectOrReply(c,c->argv[2],&psync_offset,NULL) !=
        C_OK) goto need_full_resync;
+    // 对于replid2，接受到此为止的偏移量
+    
 
-    /* Is the replication ID of this master the same advertised by the wannabe
+     /* Is the replication ID of this master the same advertised by the wannabe
      * slave via PSYNC? If the replication ID changed this master has a
      * different replication history, and there is no way to continue.
      *
      * Note that there are two potentially valid replication IDs: the ID1
      * and the ID2. The ID2 however is only valid up to a specific offset. */
+    // serverLog(LL_DEBUG,"slave复制id %s", master_replid);
+    // serverLog(LL_DEBUG,"master复制id %s", server.replid);
+
+    // if (strcasecmp(master_replid, server.replid))
+    //     serverLog(LL_DEBUG,"slave复制id != master复制id");
+    // else 
+    //     serverLog(LL_DEBUG,"slave复制id == master复制id");
+
+    // if (strcasecmp(master_replid, server.replid2))
+    //     serverLog(LL_DEBUG,"slave复制id != master继承下来的复制id");
+    // else 
+    //     serverLog(LL_DEBUG,"slave复制id == master继承下来的复制id");
+
+    // if (psync_offset > server.second_replid_offset)
+    //     serverLog(LL_DEBUG,"slave请求复制偏移量(psync_offset)为 %lld > master最大可接受复制偏移量 %lld",
+    //         psync_offset, server.second_replid_offset);
+    // else 
+    //     serverLog(LL_DEBUG,"slave请求复制偏移量(psync_offset)为 %lld <= master最大可接受复制偏移量 %lld",
+    //         psync_offset, server.second_replid_offset);
+
+    // 函数说明：strcasecmp()用来比较参数s1 和s2 字符串，比较时会自动忽略大小写的差异。
+    // 返回值：若参数s1 和s2 字符串相同则返回0。s1 长度大于s2 
+    // 长度则返回大于0 的值，s1 长度若小于s2 长度则返回小于0 的值。
+    serverLog(LL_DEBUG,"Master:%d 最大接受到此的偏移量 %lld", server.port, server.second_replid_offset);
+    serverLog(LL_DEBUG,"Master:%d 复制id为 %s", server.port, server.replid);
+    serverLog(LL_DEBUG,"Master:%d 继承下来的复制id为 %s", server.port, server.replid2);
+    serverLog(LL_DEBUG,"Slave:%s 复制id为 %s", replicationGetSlaveName(c), master_replid);
+    serverLog(LL_DEBUG,"Slave:%s 请求偏移量为(psync_offset) %lld", 
+            replicationGetSlaveName(c), psync_offset);
+
+    // 如果 `slave` 发送过来的复制 ID 是当前 `master` 的复制 ID, 说明 `master` 没变过
     if (strcasecmp(master_replid, server.replid) &&
+        // 或者和现在的新 `master` 曾经属于同一 `master`
         (strcasecmp(master_replid, server.replid2) ||
+        // 但同步进度不能比当前 `master` 还快
          psync_offset > server.second_replid_offset))
     {
-        /* Run id "?" is used by slaves that want to force a full resync. */
+        /* 运行id“ ？ ”被强制完全重新同步的从属使用。*/
         if (master_replid[0] != '?') {
             if (strcasecmp(master_replid, server.replid) &&
                 strcasecmp(master_replid, server.replid2))
             {
-                serverLog(LL_NOTICE,"Partial resynchronization not accepted: "
-                    "Replication ID mismatch (Replica asked for '%s', my "
-                    "replication IDs are '%s' and '%s')",
+                serverLog(LL_NOTICE,"不接受部分重新同步： "
+                    "复制ID不匹配(副本要求 '%s', 我的"
+                    "复制ID是 '%s' 和 '%s')",
                     master_replid, server.replid, server.replid2);
             } else {
-                serverLog(LL_NOTICE,"Partial resynchronization not accepted: "
-                    "Requested offset for second ID was %lld, but I can reply "
-                    "up to %lld", psync_offset, server.second_replid_offset);
+                serverLog(LL_NOTICE,"不接受部分重新同步： "
+                    "第二个ID的请求偏移量是 %lld, 但我最多可以回复 %lld ", 
+                    psync_offset, server.second_replid_offset);
             }
         } else {
-            serverLog(LL_NOTICE,"Full resync requested by replica %s",
+            serverLog(LL_NOTICE,"副本请求完全重新同步 %s",
                 replicationGetSlaveName(c));
         }
         goto need_full_resync;
     }
+    /*
+        想要代码运行到这里
+        1. 第一种情况只要 slave复制id(master_replid)等于master复制(server.replid)
+        2. 第二种情况只要 slave复制id(master_replid)等于master继承下来的复制id(server.replid1)
+        3. 第三种情况只要 slave复制偏移量(psync_offset)小于或等于master最大接受偏移量(second_replid_offset)
+    */
 
     /* We still have the data our slave is asking for? */
     if (!server.repl_backlog ||
@@ -525,7 +570,7 @@ int masterTryPartialResynchronization(client *c) {
     }
     psync_len = addReplyReplicationBacklog(c,psync_offset);
     serverLog(LL_NOTICE,
-        "Partial resynchronization request from %s accepted. Sending %lld bytes of backlog starting from offset %lld.",
+        "接受来自 %s 的部分重新同步请求。 Sending %lld bytes of backlog starting from offset %lld.",
             replicationGetSlaveName(c),
             psync_len, psync_offset);
     /* Note that we don't need to set the selected DB at server.slaveseldb
@@ -2021,6 +2066,8 @@ void replicationHandleMasterDisconnection(void) {
 }
 
 void replicaofCommand(client *c) {
+    serverLog(LL_DEBUG,"收到来自客户端 %s 的replica请求", replicationGetSlaveName(c));
+
     /* SLAVEOF is not allowed in cluster mode as replication is automatically
      * configured using the current address of the master node. */
     if (server.cluster_enabled) {
@@ -2210,6 +2257,7 @@ void replicationCacheMaster(client *c) {
  * the new master will accept its replication ID, and potentiall also the
  * current offset if no data was lost during the failover. So we use our
  * current replication ID and offset in order to synthesize a cached master. */
+// 在loadDataFromDisk函数中会把RDB文件中的replid和repl_offset加载进redis中相应的变量。
 void replicationCacheMasterUsingMyself(void) {
     /* The master client we create can be set to any DBID, because
      * the new master will start its replication stream with SELECT. */
@@ -2223,6 +2271,8 @@ void replicationCacheMasterUsingMyself(void) {
     unlinkClient(server.master);
     server.cached_master = server.master;
     server.master = NULL;
+    serverLog(LL_DEBUG,"(replicationCacheMasterUsingMyself)已经将从rdb文件中的复制id %s 赋值给 %d",server.replid, server.port);
+    serverLog(LL_DEBUG,"(replicationCacheMasterUsingMyself)已经将从rdb文件中的复制偏移量 %lld 赋值给 %d",server.master_repl_offset,server.port);
     serverLog(LL_NOTICE,"Before turning into a replica, using my master parameters to synthesize a cached master: I may be able to synchronize with the new master with just a partial transfer.");
 }
 
