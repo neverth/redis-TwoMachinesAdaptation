@@ -37,6 +37,7 @@
 #include <sys/socket.h>
 #include <sys/wait.h>
 #include <fcntl.h>
+#include <stdlib.h>
 
 extern char **environ;
 
@@ -248,6 +249,9 @@ struct sentinelState {
     unsigned long simfailure_flags; /* Failures simulation. */
     int deny_scripts_reconfig; /* Allow SENTINEL SET ... to change script
                                   paths at runtime? */
+    int OnlyTwoIpMode; /* Are we in OnlyTwoIp Mode? */
+    // intset *redisInstanceIPs; /* All redisInstance IP */
+    // char *ExtranetIP;
 } sentinel;
 
 /* A script execution job. */
@@ -478,6 +482,11 @@ void initSentinel(void) {
         serverAssert(retval == DICT_OK);
     }
 
+    // FILE *fp;
+    // fp = popen("curl members.3322.org/dyndns/getip", "r");
+    // char t_ExtranetIP[20];
+    // fgets(t_ExtranetIP, 20, fp);
+    // pclose(fp);
     /* Initialize various data structures. */
     sentinel.current_epoch = 0;
     sentinel.masters = dictCreate(&instancesDictType,NULL);
@@ -490,6 +499,9 @@ void initSentinel(void) {
     sentinel.announce_port = 0;
     sentinel.simfailure_flags = SENTINEL_SIMFAILURE_NONE;
     sentinel.deny_scripts_reconfig = SENTINEL_DEFAULT_DENY_SCRIPTS_RECONFIG;
+    sentinel.OnlyTwoIpMode = 0;
+    // sentinel.redisInstanceIPs = intsetNew();
+    // sentinel.ExtranetIP = t_ExtranetIP;
     memset(sentinel.myid,0,sizeof(sentinel.myid));
 }
 
@@ -523,6 +535,8 @@ void sentinelIsRunning(void) {
 
     /* Log its ID to make debugging of issues simpler. */
     serverLog(LL_WARNING,"Sentinel ID is %s", sentinel.myid);
+    if(sentinel.OnlyTwoIpMode == 1)
+        serverLog(LL_WARNING,"Sentinel ID is run as OnlyTwoIpMode");
 
     /* We want to generate a +monitor event for every configured master
      * at startup. */
@@ -1742,6 +1756,12 @@ char *sentinelHandleConfiguration(char **argv, int argc) {
             return "Please specify yes or no for the "
                    "deny-scripts-reconfig options.";
         }
+    } else if(!strcasecmp(argv[0],"OnlyTwoIpMode") && argc == 2) {
+
+        if ((sentinel.OnlyTwoIpMode = yesnotoi(argv[1])) == -1) {
+            return "Please specify yes or no for the "
+                   "OnlyTwoIpMode options.";
+        }
     } else {
         return "Unrecognized sentinel configuration statement.";
     }
@@ -1905,6 +1925,10 @@ void rewriteConfigSentinelOption(struct rewriteConfigState *state) {
     if (sentinel.announce_port) {
         line = sdscatprintf(sdsempty(),"sentinel announce-port %d",
                             sentinel.announce_port);
+        rewriteConfigRewriteLine(state,"sentinel",line,1);
+    }
+    if(sentinel.OnlyTwoIpMode){
+        line = sdscatprintf(sdsempty(),"sentinel OnlyTwoIpMode yes");
         rewriteConfigRewriteLine(state,"sentinel",line,1);
     }
 
@@ -2641,6 +2665,9 @@ int sentinelSendPing(sentinelRedisInstance *ri) {
         sentinelPingReplyCallback, ri, "%s",
         sentinelInstanceMapCommand(ri,"PING"));
     if (retval == C_OK) {
+
+        // serverLog(LL_DEBUG, "成功 ping %s : %d", ri->addr->ip, ri->addr->port);
+        // serverLog(LL_DEBUG, "是否 twomade %d", sentinel.OnlyTwoIpMode);        
         ri->link->pending_commands++;
         ri->link->last_ping_time = mstime();
         /* We update the active ping time only if we received the pong for
@@ -2650,6 +2677,7 @@ int sentinelSendPing(sentinelRedisInstance *ri) {
             ri->link->act_ping_time = ri->link->last_ping_time;
         return 1;
     } else {
+        // serverLog(LL_DEBUG, "失败 ping : %d", ri->addr->port);
         return 0;
     }
 }
@@ -3890,8 +3918,15 @@ char *sentinelGetLeader(sentinelRedisInstance *master, uint64_t epoch) {
             winner = myvote;
         }
     }
+    if(sentinel.OnlyTwoIpMode == 1){
+        serverLog(LL_DEBUG, "voters_quorum = voters / 2;");
+        voters_quorum = voters / 2;
 
-    voters_quorum = voters/2+1;
+    }
+    else{
+        serverLog(LL_DEBUG, "voters_quorum = voters / 2 + 1;");
+        voters_quorum = voters / 2 + 1;
+    }
     if (winner && (max_votes < voters_quorum || max_votes < master->quorum))
         winner = NULL;
 
@@ -4454,6 +4489,21 @@ void sentinelHandleDictOfRedisInstances(dict *instances) {
     while((de = dictNext(di)) != NULL) {
         sentinelRedisInstance *ri = dictGetVal(de);
 
+        // uint8_t success = 0;
+        // long long llval = 0;
+        // serverLog(LL_DEBUG, "成功 ping : %s", ri->addr->ip);
+        // char c_llavl[20];
+        // for (unsigned int i = 0, j = 0; i < strlen(ri->addr->ip); i++){
+        //     if(ri->addr->ip[i] != '.'){
+        //         c_llavl[j] = ri->addr->ip[i];
+        //         j++;
+        //     }            
+        // }
+        // llval = atoll(c_llavl);
+        // serverLog(LL_DEBUG, "成功 ping : %lld", llval);
+
+        // sentinel.redisInstanceIPs = intsetAdd(sentinel.redisInstanceIPs, llval, &success);
+        
         sentinelHandleRedisInstance(ri);
         if (ri->flags & SRI_MASTER) {
             sentinelHandleDictOfRedisInstances(ri->slaves);
@@ -4467,6 +4517,12 @@ void sentinelHandleDictOfRedisInstances(dict *instances) {
         sentinelFailoverSwitchToPromotedSlave(switch_to_promoted);
     dictReleaseIterator(di);
 }
+
+// void sentinelCheckOnlyTwoIpCondition(){
+//     serverLog(LL_DEBUG, "len : %d", intsetLen(sentinel.redisInstanceIPs));
+//     if(intsetLen(sentinel.redisInstanceIPs) <= 2)
+//         sentinel.OnlyTwoIpMode = 1;
+// }
 
 /* This function checks if we need to enter the TITL mode.
  *
@@ -4501,6 +4557,7 @@ void sentinelCheckTiltCondition(void) {
 
 void sentinelTimer(void) {
     sentinelCheckTiltCondition();
+    // sentinelCheckOnlyTwoIpCondition();
     sentinelHandleDictOfRedisInstances(sentinel.masters);
     sentinelRunPendingScripts();
     sentinelCollectTerminatedScripts();

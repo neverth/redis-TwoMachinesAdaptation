@@ -2,6 +2,7 @@
 *.o
 *.log
 .vscode
+.vs
 dump.rdb
 redis-benchmark
 redis-check-aof
