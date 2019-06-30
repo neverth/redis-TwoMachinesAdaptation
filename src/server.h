@@ -1150,6 +1150,7 @@ struct redisServer {
                                        that is the next byte will'll write to.*/
     long long repl_backlog_off;     /* Replication "master offset" of first
                                        byte in the replication backlog buffer.*/
+                                       // 复制积压缓冲区中第一个字节的“复制主偏移量”。
     time_t repl_backlog_time_limit; /* Time without slaves after the backlog
                                        gets released. */
     time_t repl_no_slaves_since;    /* We have no slaves since that time.

@@ -46,10 +46,12 @@ int cancelReplicationHandshake(void);
 
 /* --------------------------- Utility functions ---------------------------- */
 
-/* Return the pointer to a string representing the slave ip:listening_port
- * pair. Mostly useful for logging, since we want to log a slave using its
- * IP address and its listening port which is more clear for the user, for
- * example: "Closing connection with replica 10.1.2.3:6380". */
+/*
+ * 将指针返回到表示slave ip：listening_port对的字符串。
+ * 对于日志记录非常有用，因为我们想使用它来记录一个slave
+ * IP地址及其监听端口，对用户来说更清晰，
+ * 例如：“关闭与副本10.1.2.3:6380的连接”。 
+ */
 char *replicationGetSlaveName(client *c) {
     static char buf[NET_PEER_ID_LEN];
     char ip[NET_IP_STR_LEN];
@@ -74,7 +76,7 @@ char *replicationGetSlaveName(client *c) {
 }
 
 /* ---------------------------------- MASTER -------------------------------- */
-
+// 创建复制积压(Backlog)
 void createReplicationBacklog(void) {
     serverAssert(server.repl_backlog == NULL);
     server.repl_backlog = zmalloc(server.repl_backlog_size);
@@ -113,7 +115,7 @@ void resizeReplicationBacklog(long long newsize) {
         server.repl_backlog_off = server.master_repl_offset+1;
     }
 }
-
+// 释放复制积压Backlog
 void freeReplicationBacklog(void) {
     serverAssert(listLength(server.slaves) == 0);
     zfree(server.repl_backlog);
@@ -124,6 +126,7 @@ void freeReplicationBacklog(void) {
  * This function also increments the global replication offset stored at
  * server.master_repl_offset, because there is no case where we want to feed
  * the backlog without incrementing the offset. */
+//增加复制积压(backlog)
 void feedReplicationBacklog(void *ptr, size_t len) {
     unsigned char *p = ptr;
 
@@ -151,6 +154,7 @@ void feedReplicationBacklog(void *ptr, size_t len) {
 
 /* Wrapper for feedReplicationBacklog() that takes Redis string objects
  * as input. */
+// feedReplicationBacklog包装器
 void feedReplicationBacklogWithObject(robj *o) {
     char llstr[LONG_STR_SIZE];
     void *p;
@@ -345,10 +349,10 @@ void replicationFeedMonitors(client *c, list *monitors, int dictid, robj **argv,
 long long addReplyReplicationBacklog(client *c, long long offset) {
     long long j, skip, len;
 
-    serverLog(LL_DEBUG, "[PSYNC] Replica request offset: %lld", offset);
+    serverLog(LL_DEBUG, "[PSYNC] slave请求偏移量: %lld", offset);
 
     if (server.repl_backlog_histlen == 0) {
-        serverLog(LL_DEBUG, "[PSYNC] Backlog history len is zero");
+        serverLog(LL_DEBUG, "[PSYNC] (Backlog)积压历史长度为零");
         return 0;
     }
 
@@ -447,7 +451,7 @@ int replicationSetupSlaveForFullResync(client *slave, long long offset) {
  * with the usual full resync. */
 int masterTryPartialResynchronization(client *c) {
 
-    serverLog(LL_DEBUG,"尝试进行 PSYNC");
+    serverLog(LL_DEBUG,"Slave:%s 尝试进行 PSYNC", replicationGetSlaveName(c));
 
     long long psync_offset, psync_len;
     char *master_replid = c->argv[1]->ptr;
@@ -492,9 +496,9 @@ int masterTryPartialResynchronization(client *c) {
     // 函数说明：strcasecmp()用来比较参数s1 和s2 字符串，比较时会自动忽略大小写的差异。
     // 返回值：若参数s1 和s2 字符串相同则返回0。s1 长度大于s2 
     // 长度则返回大于0 的值，s1 长度若小于s2 长度则返回小于0 的值。
-    serverLog(LL_DEBUG,"Master:%d 最大接受到此的偏移量 %lld", server.port, server.second_replid_offset);
     serverLog(LL_DEBUG,"Master:%d 复制id为 %s", server.port, server.replid);
-    serverLog(LL_DEBUG,"Master:%d 继承下来的复制id为 %s", server.port, server.replid2);
+    serverLog(LL_DEBUG,"Master:%d 继承下来的复制id(复制ID2)为 %s", server.port, server.replid2);
+    serverLog(LL_DEBUG,"Master:%d 对于复制ID2最大接受到此的偏移量 %lld", server.port, server.second_replid_offset);
     serverLog(LL_DEBUG,"Slave:%s 复制id为 %s", replicationGetSlaveName(c), master_replid);
     serverLog(LL_DEBUG,"Slave:%s 请求偏移量为(psync_offset) %lld", 
             replicationGetSlaveName(c), psync_offset);
@@ -511,17 +515,17 @@ int masterTryPartialResynchronization(client *c) {
             if (strcasecmp(master_replid, server.replid) &&
                 strcasecmp(master_replid, server.replid2))
             {
-                serverLog(LL_NOTICE,"不接受部分重新同步： "
-                    "复制ID不匹配(副本要求 '%s', 我的"
+                serverLog(LL_NOTICE,"不接受部分PSYNC： "
+                    "复制ID不匹配(slave要求 '%s', 我的"
                     "复制ID是 '%s' 和 '%s')",
                     master_replid, server.replid, server.replid2);
             } else {
-                serverLog(LL_NOTICE,"不接受部分重新同步： "
-                    "第二个ID的请求偏移量是 %lld, 但我最多可以回复 %lld ", 
+                serverLog(LL_NOTICE,"不接受部分PSYNC： "
+                    "第二个复制ID的请求偏移量是 %lld, 但我最多可以回复 %lld ", 
                     psync_offset, server.second_replid_offset);
             }
         } else {
-            serverLog(LL_NOTICE,"副本请求完全重新同步 %s",
+            serverLog(LL_NOTICE,"slave %s 请求完全SYNC ",
                 replicationGetSlaveName(c));
         }
         goto need_full_resync;
@@ -532,6 +536,9 @@ int masterTryPartialResynchronization(client *c) {
         2. 第二种情况只要 slave复制id(master_replid)等于master继承下来的复制id(server.replid1)
         3. 第三种情况只要 slave复制偏移量(psync_offset)小于或等于master最大接受偏移量(second_replid_offset)
     */
+    serverLog(LL_DEBUG,"(最小)backlog_off = %lld", server.repl_backlog_off);
+    serverLog(LL_DEBUG,"(最大)backlog_off + backlog_histlen = %lld", 
+            server.repl_backlog_off + server.repl_backlog_histlen);
 
     /* We still have the data our slave is asking for? */
     if (!server.repl_backlog ||
@@ -539,10 +546,10 @@ int masterTryPartialResynchronization(client *c) {
         psync_offset > (server.repl_backlog_off + server.repl_backlog_histlen))
     {
         serverLog(LL_NOTICE,
-            "Unable to partial resync with replica %s for lack of backlog (Replica request was: %lld).", replicationGetSlaveName(c), psync_offset);
+            "由于缺少复制缓冲区(backlog)而无法与slave %s 进行PSYNC（slave请求为：%lld）。", replicationGetSlaveName(c), psync_offset);
         if (psync_offset > server.master_repl_offset) {
             serverLog(LL_WARNING,
-                "Warning: replica %s tried to PSYNC with an offset that is greater than the master replication offset.", replicationGetSlaveName(c));
+                "警告：slave %s 尝试使用大于主复制偏移量的偏移量的PSYNC。", replicationGetSlaveName(c));
         }
         goto need_full_resync;
     }
@@ -570,7 +577,7 @@ int masterTryPartialResynchronization(client *c) {
     }
     psync_len = addReplyReplicationBacklog(c,psync_offset);
     serverLog(LL_NOTICE,
-        "接受来自 %s 的部分重新同步请求。 Sending %lld bytes of backlog starting from offset %lld.",
+        "接受来自 %s 的部分PSYNC。 Sending %lld bytes of backlog starting from offset %lld.",
             replicationGetSlaveName(c),
             psync_len, psync_offset);
     /* Note that we don't need to set the selected DB at server.slaveseldb
@@ -691,7 +698,7 @@ void syncCommand(client *c) {
         return;
     }
 
-    serverLog(LL_NOTICE,"Replica %s asks for synchronization",
+    serverLog(LL_NOTICE,"Slave %s 请求同步",
         replicationGetSlaveName(c));
 
     /* Try a partial resynchronization if this is a PSYNC command.
@@ -706,6 +713,23 @@ void syncCommand(client *c) {
     if (!strcasecmp(c->argv[0]->ptr,"psync")) {
         if (masterTryPartialResynchronization(c) == C_OK) {
             server.stat_sync_partial_ok++;
+
+            if (server.OnlyTwoIpMode){
+                serverLog(LL_WARNING,"(syncCommand)准备执行BGSAVE命令");
+                rdbSaveInfo rsi, *rsiptr;
+                rsiptr = rdbPopulateSaveInfo(&rsi);
+                if (rsiptr){
+                    if (rdbSaveBackground(server.rdb_filename,rsiptr) == C_OK){
+
+                    }
+                    else{
+                        serverLog(LL_WARNING,"(syncCommand)执行BGSAVE命令失败");
+                    }
+                }else {
+                    serverLog(LL_WARNING,"BGSAVE for replication: replication information not available, can't generate the RDB file right now. Try later.");
+                }
+            }
+
             return; /* No full resync needed, return. */
         } else {
             char *master_replid = c->argv[1]->ptr;
@@ -1507,9 +1531,9 @@ int slaveTryPartialResynchronization(int fd, int read_reply) {
         if (server.cached_master) {
             psync_replid = server.cached_master->replid;
             snprintf(psync_offset,sizeof(psync_offset),"%lld", server.cached_master->reploff+1);
-            serverLog(LL_NOTICE,"Trying a partial resynchronization (request %s:%s).", psync_replid, psync_offset);
+            serverLog(LL_NOTICE,"尝试请求部分重新同步(request %s:%s).", psync_replid, psync_offset);
         } else {
-            serverLog(LL_NOTICE,"Partial resynchronization not possible (no cached master)");
+            serverLog(LL_NOTICE,"无法进行部分重新同步（没有缓存的master）");
             psync_replid = "?";
             memcpy(psync_offset,"-1",3);
         }
@@ -1559,7 +1583,7 @@ int slaveTryPartialResynchronization(int fd, int read_reply) {
             memcpy(server.master_replid, replid, offset-replid-1);
             server.master_replid[CONFIG_RUN_ID_SIZE] = '\0';
             server.master_initial_offset = strtoll(offset,NULL,10);
-            serverLog(LL_NOTICE,"Full resync from master: %s:%lld",
+            serverLog(LL_NOTICE,"来自master的完全重新同步: %s:%lld",
                 server.master_replid,
                 server.master_initial_offset);
         }
@@ -1572,7 +1596,7 @@ int slaveTryPartialResynchronization(int fd, int read_reply) {
     if (!strncmp(reply,"+CONTINUE",9)) {
         /* Partial resync was accepted. */
         serverLog(LL_NOTICE,
-            "Successful partial resynchronization with master.");
+            "成功与master部分重新同步。");
 
         /* Check the new replication ID advertised by the master. If it
          * changed, we need to set the new ID as primary ID, and set or
@@ -1708,7 +1732,7 @@ void syncWithMaster(aeEventLoop *el, int fd, void *privdata, int mask) {
             goto error;
         } else {
             serverLog(LL_NOTICE,
-                "Master replied to PING, replication can continue...");
+                "master回复PING，同步可以继续......");
         }
         sdsfree(err);
         server.repl_state = REPL_STATE_SEND_AUTH;
@@ -1859,7 +1883,7 @@ void syncWithMaster(aeEventLoop *el, int fd, void *privdata, int mask) {
      * uninstalling the read handler from the file descriptor. */
 
     if (psync_result == PSYNC_CONTINUE) {
-        serverLog(LL_NOTICE, "MASTER <-> REPLICA sync: Master accepted a Partial Resynchronization.");
+        serverLog(LL_NOTICE, "MASTER <-> REPLICA sync: Master接受了部分重新同步。");
         return;
     }
 
@@ -2007,7 +2031,7 @@ void replicationSetMaster(char *ip, int port) {
     server.masterhost = sdsnew(ip);
     server.masterport = port;
     if (server.master) {
-        freeClient(server.master);
+        freeClient(server.master); 
     }
     disconnectAllBlockedClients(); /* Clients blocked in master, now slave. */
 
@@ -2271,9 +2295,9 @@ void replicationCacheMasterUsingMyself(void) {
     unlinkClient(server.master);
     server.cached_master = server.master;
     server.master = NULL;
-    serverLog(LL_DEBUG,"(replicationCacheMasterUsingMyself)已经将从rdb文件中的复制id %s 赋值给 %d",server.replid, server.port);
-    serverLog(LL_DEBUG,"(replicationCacheMasterUsingMyself)已经将从rdb文件中的复制偏移量 %lld 赋值给 %d",server.master_repl_offset,server.port);
-    serverLog(LL_NOTICE,"Before turning into a replica, using my master parameters to synthesize a cached master: I may be able to synchronize with the new master with just a partial transfer.");
+    serverLog(LL_NOTICE,"在变成slave之前, 用我的master参数合成缓存的master: 我可能只需要部分传输就可以与新的主服务器同步。");
+    serverLog(LL_DEBUG,"(replicationCacheMasterUsingMyself)已经将从rdb文件中的复制id %s 赋值给缓存master",server.replid);
+    serverLog(LL_DEBUG,"(replicationCacheMasterUsingMyself)已经将从rdb文件中的复制偏移量 %lld 赋值给缓存master",server.master_repl_offset);
 }
 
 /* Free a cached master, called when there are no longer the conditions for
@@ -2281,7 +2305,7 @@ void replicationCacheMasterUsingMyself(void) {
 void replicationDiscardCachedMaster(void) {
     if (server.cached_master == NULL) return;
 
-    serverLog(LL_NOTICE,"Discarding previously cached master state.");
+    serverLog(LL_NOTICE,"丢弃之前缓存master的状态。");
     server.cached_master->flags &= ~CLIENT_MASTER;
     freeClient(server.cached_master);
     server.cached_master = NULL;
