@@ -1201,7 +1201,12 @@ int serverCron(struct aeEventLoop *eventLoop, long long id, void *clientData) {
                 listLength(server.clients)-listLength(server.slaves),
                 listLength(server.slaves),
                 zmalloc_used_memory());
-        }
+            serverLog(LL_DEBUG, "offset:%lld, replid2_offset:%lld, min_backlog:%lld, max_backlog:%lld", 
+                server.master_repl_offset,
+                server.second_replid_offset, 
+                server.repl_backlog_off, 
+                server.repl_backlog_off + server.repl_backlog_histlen);
+        }    
     }
 
     /* We need to do a few operations on clients asynchronously. */
@@ -4178,7 +4183,7 @@ int main(int argc, char **argv) {
         serverLog(LL_WARNING, "Configuration loaded");
     }
     if (server.OnlyTwoIpMode)
-        serverLog(LL_WARNING, "redis正在以 OnlyTwoIpMode");
+        serverLog(LL_WARNING, "redis正在以 OnlyTwoIpMode 运行");
 
     server.supervised = redisIsSupervised(server.supervised_mode);
     int background = server.daemonize && !server.supervised;
