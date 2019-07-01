@@ -1628,6 +1628,20 @@ int slaveTryPartialResynchronization(int fd, int read_reply) {
                 /* Disconnect all the sub-slaves: they need to be notified. */
                 disconnectSlaves();
             }
+            if (server.OnlyTwoIpMode){
+                serverLog(LL_WARNING,"(syncCommand)准备执行BGSAVE命令");
+                rdbSaveInfo rsi, *rsiptr;
+                rsiptr = rdbPopulateSaveInfo(&rsi);
+                if (rsiptr){
+                    if (rdbSaveBackground(server.rdb_filename,rsiptr) == C_OK){
+                    }
+                    else{
+                        serverLog(LL_WARNING,"(syncCommand)执行BGSAVE命令失败");
+                    }
+                }else {
+                    serverLog(LL_WARNING,"BGSAVE for replication: replication information not available, can't generate the RDB file right now. Try later.");
+                }
+            }
         }
 
         /* Setup the replication to continue. */
@@ -2133,7 +2147,7 @@ void replicaofCommand(client *c) {
             return;
         }
         /* There was no previous master or the user specified a different one,
-         * we can continue. */
+         * 我们可以继续 */
         replicationSetMaster(c->argv[1]->ptr, port);
         sds client = catClientInfoString(sdsempty(),c);
         serverLog(LL_NOTICE,"REPLICAOF %s:%d enabled (user request from '%s')",
