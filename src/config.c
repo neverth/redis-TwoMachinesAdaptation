@@ -220,7 +220,15 @@ void loadServerConfigFromString(char *config) {
             if ((server.OnlyTwoIpMode = yesnotoi(argv[1])) == -1) {
                 err = "argument must be 'yes' or 'no'"; goto loaderr;
             }
-        } else if (!strcasecmp(argv[0],"port") && argc == 2) {
+        }else if (!strcasecmp(argv[0], "master-cache-mode") && argc == 2) {
+			if ((server.masterCacheMode = yesnotoi(argv[1])) == -1) {
+				err = "argument must be 'yes' or 'no'"; goto loaderr;
+			}
+		}else if (!strcasecmp(argv[0], "lisSentinel") && argc == 3) {
+			server.lisSentinel_host = sdsnew(argv[1]);
+			server.lisSentinel_port = atoi(argv[2]);
+			server.lisSentinel_state = LisSen_STATE_NONE;
+		}else if (!strcasecmp(argv[0],"port") && argc == 2) {
             server.port = atoi(argv[1]);
             if (server.port < 0 || server.port > 65535) {
                 err = "Invalid port"; goto loaderr;
