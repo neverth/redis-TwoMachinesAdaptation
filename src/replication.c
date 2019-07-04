@@ -1356,7 +1356,7 @@ void readSyncBulkPayload(aeEventLoop *el, int fd, void *privdata, int mask) {
          * rdbLoad() will call the event loop to process events from time to
          * time for non blocking loading. */
         aeDeleteFileEvent(server.el,server.repl_transfer_s,AE_READABLE);
-        serverLog(LL_NOTICE, "MASTER <-> REPLICA sync: Loading DB in memory");
+        serverLog(LL_NOTICE, "MASTER <-> REPLICA sync: 正在将DB加载到内存中");
         rdbSaveInfo rsi = RDB_SAVE_INFO_INIT;
         if (rdbLoad(server.rdb_filename,&rsi) != C_OK) {
             serverLog(LL_WARNING,"Failed trying to load the MASTER synchronization DB from disk");
@@ -1366,6 +1366,8 @@ void readSyncBulkPayload(aeEventLoop *el, int fd, void *privdata, int mask) {
             if (aof_is_enabled) restartAOFAfterSYNC();
             return;
         }
+        serverLog(LL_DEBUG,"完全重新同步得到的rdb文件中repl_stream_db='%d', repl_id='%s', repl_offset='%lld'"
+                ,rsi.repl_stream_db, rsi.repl_id, rsi.repl_offset);
         /* Final setup of the connected slave <- master link */
         zfree(server.repl_transfer_tmpfile);
         close(server.repl_transfer_fd);
@@ -1384,7 +1386,7 @@ void readSyncBulkPayload(aeEventLoop *el, int fd, void *privdata, int mask) {
          * masters after a failover. */
         if (server.repl_backlog == NULL) createReplicationBacklog();
 
-        serverLog(LL_NOTICE, "MASTER <-> REPLICA sync: Finished with success");
+        serverLog(LL_NOTICE, "MASTER <-> REPLICA sync: 成功完成");
         /* Restart the AOF subsystem now that we finished the sync. This
          * will trigger an AOF rewrite, and when done will start appending
          * to the new file. */
@@ -1921,6 +1923,7 @@ void syncWithMaster(aeEventLoop *el, int fd, void *privdata, int mask) {
     }
 
     /* Prepare a suitable temp file for bulk transfer */
+    // psync_result == PSYNC_FULLRESYNC
     while(maxtries--) {
         snprintf(tmpfile,256,
             "temp-%d.%ld.rdb",(int)server.unixtime,(long int)getpid());

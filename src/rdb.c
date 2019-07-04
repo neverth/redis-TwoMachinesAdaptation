@@ -1951,14 +1951,21 @@ int rdbLoadRio(rio *rdb, rdbSaveInfo *rsi, int loading_aof) {
                     (char*)auxkey->ptr,
                     (char*)auxval->ptr);
             } else if (!strcasecmp(auxkey->ptr,"repl-stream-db")) {
+                
                 if (rsi) rsi->repl_stream_db = atoi(auxval->ptr);
+                serverLog(LL_DEBUG,"取得repl-stream-db: '%d'",
+                    rsi->repl_stream_db);
             } else if (!strcasecmp(auxkey->ptr,"repl-id")) {
                 if (rsi && sdslen(auxval->ptr) == CONFIG_RUN_ID_SIZE) {
                     memcpy(rsi->repl_id,auxval->ptr,CONFIG_RUN_ID_SIZE+1);
                     rsi->repl_id_is_set = 1;
                 }
+                serverLog(LL_DEBUG,"取得repl-id: '%s'",
+                    rsi->repl_id);
             } else if (!strcasecmp(auxkey->ptr,"repl-offset")) {
                 if (rsi) rsi->repl_offset = strtoll(auxval->ptr,NULL,10);
+                serverLog(LL_DEBUG,"取得repl-offset: '%lld'",
+                    rsi->repl_offset);
             } else if (!strcasecmp(auxkey->ptr,"lua")) {
                 /* Load the script back in memory. */
                 if (luaCreateFunction(NULL,server.lua,auxval) == NULL) {
