@@ -1184,7 +1184,7 @@ struct redisServer {
 	int master_conn_state;
 	redisAsyncContext* pc;
 	redisAsyncContext* cc;
-	char* master_cache_ip;
+	char master_cache_ip[20];
 	int master_cache_port;
 	mstime_t cc_conn_time;
 
@@ -1473,6 +1473,8 @@ size_t redisPopcount(void* s, long count);
 void redisSetProcTitle(char* title);
 
 /* networking.c -- Networking and Client related operations */
+int prepareClientToWrite(client* c);
+void addReplyBulkLen(client *c, robj *obj);
 client* createClient(int fd);
 void closeTimedoutClients(void);
 void freeClient(client* c);
@@ -1678,6 +1680,7 @@ void feedAppendOnlyFile(struct redisCommand* cmd, int dictid, robj** argv, int a
 void aofRemoveTempFile(pid_t childpid);
 int rewriteAppendOnlyFileBackground(void);
 int loadAppendOnlyFile(char* filename);
+int loadAppendOnlyFileToMaster(char* filename, client *master);
 void stopAppendOnly(void);
 int startAppendOnly(void);
 void backgroundRewriteDoneHandler(int exitcode, int bysignal);

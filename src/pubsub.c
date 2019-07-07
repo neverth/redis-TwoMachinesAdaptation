@@ -222,6 +222,9 @@ int pubsubUnsubscribeAllPatterns(client *c, int notify) {
 }
 
 /* Publish a message */
+/* Send to clients listening for that channel */
+    // 取出包含所有订阅频道 channel 的客户端的链表
+    // 并将消息发送给它们
 int pubsubPublishMessage(robj *channel, robj *message) {
     int receivers = 0;
     dictEntry *de;
@@ -234,14 +237,16 @@ int pubsubPublishMessage(robj *channel, robj *message) {
         list *list = dictGetVal(de);
         listNode *ln;
         listIter li;
-
+            // 遍历客户端链表，将 message 发送给它们
         listRewind(list,&li);
         while ((ln = listNext(&li)) != NULL) {
             client *c = ln->value;
-
+            
             addReply(c,shared.mbulkhdr[3]);
             addReply(c,shared.messagebulk);
+            // 消息的来源频道
             addReplyBulk(c,channel);
+            // 消息内容
             addReplyBulk(c,message);
             receivers++;
         }

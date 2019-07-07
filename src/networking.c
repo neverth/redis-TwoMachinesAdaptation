@@ -296,15 +296,40 @@ void _addReplyStringToList(client *c, const char *s, size_t len) {
 
 /* Add the object 'obj' string representation to the client output buffer. */
 void addReply(client *c, robj *obj) {
+	//serverLog(LL_DEBUG, "addReply");
+
     if (prepareClientToWrite(c) != C_OK) return;
 
+	//serverLog(LL_DEBUG, "prepareClientToWrite");
+
+	/* This is an important place where we can avoid copy-on-write
+	 * when there is a saving child running, avoiding touching the
+	 * refcount field of the object if it's not needed.
+	 *
+	 * 如果在使用子进程，那么尽可能地避免修改对象的 refcount 域。
+	 *
+	 * If the encoding is RAW and there is room in the static buffer
+	 * we'll be able to send the object to the client without
+	 * messing with its page.
+	 *
+	 * 如果对象的编码为 RAW ，并且静态缓冲区中有空间
+	 * 那么就可以在不弄乱内存页的情况下，将对象发送给客户端。
+	 */
     if (sdsEncodedObject(obj)) {
+		// 首先尝试复制内容到 c->buf 中，这样可以避免内存分配
         if (_addReplyToBuffer(c,obj->ptr,sdslen(obj->ptr)) != C_OK)
+			// 如果 c->buf 中的空间不够，就复制到 c->reply 链表中
+			// 可能会引起内存分配
             _addReplyStringToList(c,obj->ptr,sdslen(obj->ptr));
     } else if (obj->encoding == OBJ_ENCODING_INT) {
         /* For integer encoded strings we just convert it into a string
          * using our optimized function, and attach the resulting string
          * to the output buffer. */
+		 /* Optimization: if there is room in the static buffer for 32 bytes
+		  * (more than the max chars a 64 bit integer can take as string) we
+		  * avoid decoding the object and go for the lower level approach. */
+		  // 优化，如果 c->buf 中有等于或多于 32 个字节的空间
+		  // 那么将整数直接以字符串的形式复制到 c->buf 中
         char buf[32];
         size_t len = ll2string(buf,sizeof(buf),(long)obj->ptr);
         if (_addReplyToBuffer(c,buf,len) != C_OK)
@@ -977,12 +1002,21 @@ client *lookupClientByID(uint64_t id) {
 /* Write data in output buffers to client. Return C_OK if the client
  * is still valid after the call, C_ERR if it was freed. */
 int writeToClient(int fd, client *c, int handler_installed) {
+	//serverLog(LL_DEBUG, "writeToClient");
     ssize_t nwritten = 0, totwritten = 0;
     size_t objlen;
     clientReplyBlock *o;
 
+	// 一直循环，直到回复缓冲区为空
+	// 或者指定条件满足为止
     while(clientHasPendingReplies(c)) {
         if (c->bufpos > 0) {
+			// c->bufpos > 0
+
+			// 写入内容到套接字
+			// c->sentlen 是用来处理 short write 的
+			// 当出现 short write ，导致写入未能一次完成时，
+			// c->buf+c->sentlen 就会偏移到正确（未写入）内容的位置上。
             nwritten = write(fd,c->buf+c->sentlen,c->bufpos-c->sentlen);
             if (nwritten <= 0) break;
             c->sentlen += nwritten;
@@ -1070,6 +1104,7 @@ int writeToClient(int fd, client *c, int handler_installed) {
 
 /* Write event handler. Just send data to the client. */
 void sendReplyToClient(aeEventLoop *el, int fd, void *privdata, int mask) {
+	//serverLog(LL_DEBUG, "sendReplyToClient");
     UNUSED(el);
     UNUSED(mask);
     writeToClient(fd,privdata,1);
@@ -1538,16 +1573,22 @@ void readQueryFromClient(aeEventLoop *el, int fd, void *privdata, int mask) {
          * for example once we resume a blocked client after CLIENT PAUSE. */
         if (remaining > 0 && remaining < readlen) readlen = remaining;
     }
-
+	// 获取查询缓冲区当前内容的长度
+	// 如果读取出现 short read ，那么可能会有内容滞留在读取缓冲区里面
+	// 这些滞留内容也许不能完整构成一个符合协议的命令，
     qblen = sdslen(c->querybuf);
+	// 如果有需要，更新缓冲区内容长度的峰值（peak）
     if (c->querybuf_peak < qblen) c->querybuf_peak = qblen;
+	// 为查询缓冲区分配空间
     c->querybuf = sdsMakeRoomFor(c->querybuf, readlen);
+	// 读入内容到查询缓存
     nread = read(fd, c->querybuf+qblen, readlen);
+	// 读入出错
     if (nread == -1) {
         if (errno == EAGAIN) {
             return;
         } else {
-            serverLog(LL_VERBOSE, "Reading from client: %s",strerror(errno));
+            serverLog(LL_VERBOSE, "Reading from client(fd=%d): %s",c->fd, strerror(errno));
             freeClient(c);
             return;
         }
@@ -1564,6 +1605,8 @@ void readQueryFromClient(aeEventLoop *el, int fd, void *privdata, int mask) {
     }
 
     sdsIncrLen(c->querybuf,nread);
+    
+	// serverLog(LL_DEBUG, "fd = %d \n %s", c->fd, c->querybuf);
     c->lastinteraction = server.unixtime;
     if (c->flags & CLIENT_MASTER) c->read_reploff += nread;
     server.stat_net_input_bytes += nread;

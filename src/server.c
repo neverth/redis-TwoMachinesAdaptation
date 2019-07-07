@@ -249,25 +249,26 @@ void lisSentinelProcessHelloMessage(char* hello, int hello_len) {
 	port_old = atoi(token[2]);
 	sds ip_new = sdsnew(token[3]);
 	port_new = atoi(token[4]);
-	serverLog(LL_DEBUG, " %s %s %d  %s %d", name,
+	
+	serverLog(LL_DEBUG, " 从+switch-master频道收到消息 %s %s %d %s %d", name,
 		ip_old, port_old, ip_new, port_new);
 
-	char temp[(int)sdslen(ip_new)];
-	for (int i = 0; i < (int)sdslen(ip_new); i++) {
-		temp[i] = ip_new[i];
+	if (port_new == server.port){
+		server.master_cache_port = port_old;
+		for (int i = 0; i < (int)sdslen(ip_new); i++) {
+			server.master_cache_ip[i] = ip_new[i];
+		}
+		server.master_cache_ip[(int)sdslen(ip_new)] = '\0'; // ..真是难搞 re
+		serverLog(LL_DEBUG, "记录master %s:%d ", server.master_cache_ip, server.master_cache_port );	
 	}
-	temp[(int)sdslen(ip_new)] = '\0'; // ..真是难搞 re
 
-	server.master_cache_ip = temp;
-	server.master_cache_port = port_new;
-
-	if (port_old == server.port && strcasecmp(ip_old, server.master_cache_ip) == 0) {
+	
+	// 接到频道新的消息时，当旧的port为本机、新的port为之前储存下来的port
+	if (port_old == server.port && port_new == server.master_cache_port) {
 		server.master_trans_state = MSATER_TRANS_STATE_START;
-		serverLog(LL_DEBUG, "正在向 %d 发送数据", port_new);
+		serverLog(LL_DEBUG, "开始向 %s:%d 发送数据", server.master_cache_ip, server.master_cache_port );
 	}
 
-	// serverLog(LL_DEBUG, "正在向 %s 发送数据", server.master_cache_ip);
-	server.master_cache_port = port_new;
 	sdsfree(name);
 	sdsfree(ip_old);
 	sdsfree(ip_new);
@@ -1680,52 +1681,171 @@ int serverCron(struct aeEventLoop* eventLoop, long long id, void* clientData) {
 			if (server.cc == NULL &&
 				(server.master_cache_ip != NULL) &&
 				(server.master_cache_port != 0)) {
-				// 连接实例                  // 为啥这里会错，热
-				server.cc = redisAsyncConnect("127.0.0.1", server.master_cache_port);
-				if (server.cc->err) {
-					serverLog(LL_WARNING, "连接 master 出错");
-					server.cc = NULL;
-					// server.cc->data = NULL;
+
+				client* c;
+				int fd;
+				// 连接主服务器
+				fd = anetTcpNonBlockConnect(NULL, server.master_cache_ip, server.master_cache_port);
+				if (fd == -1) {
+					serverLog(LL_WARNING, "连接master失败: %s",
+						strerror(errno));
 					server.master_conn_state = MSATER_CONN_STATE_NONE;
-					redisAsyncFree(server.cc);
-					// 连接成功
+					return C_ERR;
 				}
-				else {
-					serverLog(LL_WARNING, "连接 master %s:%d 成功",
-						server.master_cache_ip, server.master_cache_port);
-					server.master_conn_state = MSATER_CONN_STATE_CONNECT;
-					server.cc_conn_time = mstime();
-					server.cc->data = &server;
-					redisAeAttach(server.el, server.cc);
+				serverLog(LL_DEBUG, "连接master成功 fd = %d", fd);
+				server.master_conn_state = MSATER_CONN_STATE_CONNECT;
 
-					// 设置连线 callback 就用lisSentienl的
-					redisAsyncSetConnectCallback(server.cc,
-						lisSentinelLinkEstablishedCallback);
-
-					// 设置断线 callback 就用lisSentienl的
-					redisAsyncSetDisconnectCallback(server.cc,
-						lisSentinelDisconnectCallback);
-
-					// 为客户但设置名字 "cmd"
-					char name[64];
-					snprintf(name, sizeof(name), "-%.8s-%s", server.runid, "cmd");
-					// lisSentinelDiscardReplyCallback不做处理，就用lisSentienl的
-					redisAsyncCommand(server.pc, lisSentinelDiscardReplyCallback, NULL,
-						"CLIENT SETNAME %s", name);
-
-					/* Send a PING ASAP when reconnecting. */
-					int retval = redisAsyncCommand(server.pc,
-						masterPingReplyCallback, NULL, "PING");
-					if (retval == C_OK) {
-						serverLog(LL_DEBUG, "成功 ping master, 成功连接");
-					}
-					else {
-						serverLog(LL_DEBUG, "失败 ping master");
-					}
+				if ((c = createClient(fd)) == NULL) {
+					serverLog(LL_WARNING,
+						"Error registering fd event for the new client: %s (fd=%d)",
+						strerror(errno), fd);
+					close(fd); /* May be already closed, just ignore errors */
+					server.master_conn_state = MSATER_CONN_STATE_NONE;
 				}
+
+				c->flags = 9999;
+				serverLog(LL_DEBUG, "创建master客户端成功");		
+				if(loadAppendOnlyFileToMaster(server.aof_filename, c) == C_OK){
+					
+				}
+
+
+
+				// if ((c = createClient(fd)) == NULL) {
+				// 	serverLog(LL_WARNING,
+				// 		"Error registering fd event for the new client: %s (fd=%d)",
+				// 		strerror(errno), fd);
+				// 	close(fd); /* May be already closed, just ignore errors */
+				// 	server.master_conn_state = MSATER_CONN_STATE_NONE;
+				// }
+				// serverLog(LL_DEBUG, "创建master客户端成功");
+
+				// loadAppendOnlyFileToMaster("dump-36379.aof", c);
+
+
+				//   //连接实例                  // 为啥这里会错，热
+				// server.cc = redisAsyncConnect("127.0.0.1", server.master_cache_port);
+				// if (server.cc->err) {
+				// 	serverLog(LL_WARNING, "连接 master 出错");
+				// 	server.cc = NULL;
+				// 	// server.cc->data = NULL;
+				// 	server.master_conn_state = MSATER_CONN_STATE_NONE;
+				// 	redisAsyncFree(server.cc);
+				// 	// 连接成功
+				// }
+				// else {
+				// 	serverLog(LL_WARNING, "连接 master %d 成功",
+				// 		server.master_cache_port);
+				// 	server.master_conn_state = MSATER_CONN_STATE_CONNECT;
+				// 	server.cc_conn_time = mstime();
+				// 	server.cc->data = &server;
+				// 	redisAeAttach(server.el, server.cc);
+
+				// 	// 设置连线 callback 就用lisSentienl的
+				// 	redisAsyncSetConnectCallback(server.cc,
+				// 		lisSentinelLinkEstablishedCallback);
+
+				// 	// 设置断线 callback 就用lisSentienl的
+				// 	redisAsyncSetDisconnectCallback(server.cc,
+				// 		lisSentinelDisconnectCallback);
+
+				// 	// 为客户但设置名字 "cmd"
+				// 	char name[64];
+				// 	snprintf(name, sizeof(name), "-%.8s-%s", server.runid, "cmd");
+				// 	// lisSentinelDiscardReplyCallback不做处理，就用lisSentienl的
+				// 	redisAsyncCommand(server.pc, lisSentinelDiscardReplyCallback, NULL,
+				// 		"CLIENT SETNAME %s", name);
+
+				// 	/* Send a PING ASAP when reconnecting. */
+				// 	int retval = redisAsyncCommand(server.pc,
+				// 		masterPingReplyCallback, NULL, "PING");
+				// 	if (retval == C_OK) {
+				// 		serverLog(LL_DEBUG, "成功 ping master, 成功连接");
+				// 	}
+				// 	else {
+				// 		serverLog(LL_DEBUG, "失败 ping master");
+				// 	}
+				// }
 			}
 		}
 	}
+
+
+	//run_with_period(100) {
+	//	if (server.masterCacheMode && // 当是缓存服务器模式
+	//		(server.master_trans_state == MSATER_TRANS_STATE_START && // 需要向master传输数据
+	//			server.master_conn_state == MSATER_CONN_STATE_CONNECT)) { // 已经跟master建立连接
+
+	//		server.master_trans_state = MSATER_TRANS_STATE_ING;
+
+	//		// 把内存中的数据发送到 master
+	//		dictIterator* di = NULL;
+	//		dictEntry* de;
+	//		char tmpfile[256];
+	//		char magic[10];
+	//		int j;
+	//		long long now = mstime();
+	//		FILE* fp;
+	//		rio rdb;
+	//		uint64_t cksum;
+
+	//		for (j = 0; j < server.dbnum; j++) {
+
+	//			// 指向数据库
+	//			redisDb* db = server.db + j;
+
+	//			// 指向数据库键空间
+	//			dict* d = db->dict;
+
+	//			// 跳过空数据库
+	//			if (dictSize(d) == 0) continue;
+
+	//			// 创建键空间迭代器
+	//			di = dictGetSafeIterator(d);
+	//			if (!di) {
+	//				serverLog(LL_DEBUG, "键空间迭代器获取失败");
+	//				server.master_trans_state = MSATER_TRANS_STATE_NONE;
+	//				return C_ERR;
+	//			}
+
+	//			/* Iterate this DB writing every entry
+	//			 *
+	//			 * 遍历数据库，并写入每个键值对的数据
+	//			 */
+	//			while ((de = dictNext(di)) != NULL) {
+	//				sds keystr = dictGetKey(de);
+	//				robj key, * o = dictGetVal(de);
+	//				long long expire;
+	//				unsigned char key_str[32];
+	//				unsigned char o_str[32];
+
+	//				// 根据 keystr ，在栈中创建一个 key 对象, 就是封装成对象
+	//				initStaticStringObject(key, keystr);
+	//				serverLog(LL_DEBUG, "key: %s", keystr);
+	//				// 获取键的过期时间
+	//				expire = getExpire(db, &key);
+
+	//				if (expire != -1) {
+	//					//不写入已经过期的键 
+	//					if (expire < now) return 0;
+	//				}
+	//				// 尝试对 INT 编码的字符串进行特殊编码
+	//				if (key.encoding == OBJ_ENCODING_INT) {
+	//					ll2string((char*)key_str, 32, (long)key.ptr);
+	//				}
+	//				else {
+	//					unsigned char* key_str = key.ptr;
+	//				}
+
+	//				// 保存键值对数据
+	//			}
+
+	//			dictReleaseIterator(di);
+	//		}
+	//		server.master_trans_state = MSATER_TRANS_STATE_OK;
+
+	//	}
+	//}
 	server.cronloops++;
 	return 1000 / server.hz;
 }
@@ -1914,7 +2034,7 @@ void initServerConfig(void) {
 	server.master_conn_state = MSATER_CONN_STATE_NONE;
 	server.pc = NULL;
 	server.cc = NULL;
-	server.master_cache_ip = NULL;
+	// server.master_cache_ip = NULL;
 	server.master_cache_port = 0;
 	server.configfile = NULL;
 	server.executable = NULL;
@@ -2710,6 +2830,7 @@ struct redisCommand* lookupCommandOrOriginal(sds name) {
 void propagate(struct redisCommand* cmd, int dbid, robj** argv, int argc,
 	int flags)
 {
+	//serverLog(LL_DEBUG, "propagate传播命令");
 	if (server.aof_state != AOF_OFF && flags & PROPAGATE_AOF)
 		feedAppendOnlyFile(cmd, dbid, argv, argc);
 	if (flags & PROPAGATE_REPL)
@@ -2807,6 +2928,7 @@ void preventCommandReplication(client* c) {
  *
  */
 void call(client* c, int flags) {
+	//serverLog(LL_DEBUG, "正在执行call函数");
 	long long dirty, start, duration;
 	int client_old_flags = c->flags;
 	struct redisCommand* real_cmd = c->cmd;
@@ -2936,6 +3058,7 @@ void call(client* c, int flags) {
  * other operations can be performed by the caller. Otherwise
  * if C_ERR is returned the client was destroyed (i.e. after QUIT). */
 int processCommand(client* c) {
+	//serverLog(LL_DEBUG, "正在执行 processCommand");
 	moduleCallCommandFilters(c);
 
 	/* The QUIT command is handled separately. Normal command procs will

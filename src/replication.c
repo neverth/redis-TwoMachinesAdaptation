@@ -176,6 +176,7 @@ void feedReplicationBacklogWithObject(robj *o) {
  * stream. Instead if the instance is a slave and has sub-slaves attached,
  * we use replicationFeedSlavesFromMaster() */
 void replicationFeedSlaves(list *slaves, int dictid, robj **argv, int argc) {
+	//serverLog(LL_DEBUG, "replicationFeedSlaves将命令和参数按照redis的协议格式写入到slave的回复缓存中");
     listNode *ln;
     listIter li;
     int j, len;
@@ -195,7 +196,8 @@ void replicationFeedSlaves(list *slaves, int dictid, robj **argv, int argc) {
     /* We can't have slaves attached and no backlog. */
     serverAssert(!(listLength(slaves) != 0 && server.repl_backlog == NULL));
 
-    /* Send SELECT command to every slave if needed. */
+	/* Send SELECT command to every slave if needed. */
+	// 如果有需要的话，发送 SELECT 命令，指定数据库
     if (server.slaveseldb != dictid) {
         robj *selectcmd;
 
@@ -229,6 +231,7 @@ void replicationFeedSlaves(list *slaves, int dictid, robj **argv, int argc) {
     server.slaveseldb = dictid;
 
     /* Write the command to the replication backlog if any. */
+	// 将命令写入到backlog
     if (server.repl_backlog) {
         char aux[LONG_STR_SIZE+3];
 
@@ -258,14 +261,19 @@ void replicationFeedSlaves(list *slaves, int dictid, robj **argv, int argc) {
     /* Write the command to every slave. */
     listRewind(slaves,&li);
     while((ln = listNext(&li))) {
+		// 指向从服务器
         client *slave = ln->value;
 
         /* Don't feed slaves that are still waiting for BGSAVE to start */
+		// 不要给正在等待 BGSAVE 开始的从服务器发送命令
         if (slave->replstate == SLAVE_STATE_WAIT_BGSAVE_START) continue;
 
         /* Feed slaves that are waiting for the initial SYNC (so these commands
          * are queued in the output buffer until the initial SYNC completes),
          * or are already in sync with the master. */
+		 // 向已经接收完和正在接收 RDB 文件的从服务器发送命令
+		 // 如果从服务器正在接收主服务器发送的 RDB 文件，
+		 // 那么在初次 SYNC 完成之前，主服务器发送的内容会被放进一个缓冲区里面
 
         /* Add the multi bulk length. */
         addReplyMultiBulkLen(slave,argc);

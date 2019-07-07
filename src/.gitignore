@@ -3,3 +3,7 @@
 *.gcov
 redis.info
 lcov-html
+.vscode
+conf
+deps
+modules
