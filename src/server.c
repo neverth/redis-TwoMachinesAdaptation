@@ -253,18 +253,29 @@ void lisSentinelProcessHelloMessage(char* hello, int hello_len) {
 	serverLog(LL_DEBUG, " 从+switch-master频道收到消息 %s %s %d %s %d", name,
 		ip_old, port_old, ip_new, port_new);
 
-	if (port_new == server.port){
-		server.master_cache_port = port_old;
+	// if (port_new == server.port){
+	// 	server.master_cache_port = port_old;
+	// 	for (int i = 0; i < (int)sdslen(ip_new); i++) {
+	// 		server.master_cache_ip[i] = ip_new[i];
+	// 	}
+	// 	server.master_cache_ip[(int)sdslen(ip_new)] = '\0'; // ..真是难搞 re
+	// 	serverLog(LL_DEBUG, "记录master %s:%d ", server.master_cache_ip, server.master_cache_port );	
+	// }
+
+	
+	// // 接到频道新的消息时，当旧的port为本机、新的port为之前储存下来的port
+	// if (port_old == server.port && port_new == server.master_cache_port) {
+	// 	server.master_trans_state = MSATER_TRANS_STATE_START;
+	// 	serverLog(LL_DEBUG, "开始向 %s:%d 发送数据", server.master_cache_ip, server.master_cache_port );
+	// }
+
+	if (port_old == server.port) {
+		server.master_cache_port = port_new;
 		for (int i = 0; i < (int)sdslen(ip_new); i++) {
 			server.master_cache_ip[i] = ip_new[i];
 		}
 		server.master_cache_ip[(int)sdslen(ip_new)] = '\0'; // ..真是难搞 re
-		serverLog(LL_DEBUG, "记录master %s:%d ", server.master_cache_ip, server.master_cache_port );	
-	}
-
-	
-	// 接到频道新的消息时，当旧的port为本机、新的port为之前储存下来的port
-	if (port_old == server.port && port_new == server.master_cache_port) {
+		serverLog(LL_DEBUG, "记录master %s:%d ", server.master_cache_ip, server.master_cache_port );
 		server.master_trans_state = MSATER_TRANS_STATE_START;
 		serverLog(LL_DEBUG, "开始向 %s:%d 发送数据", server.master_cache_ip, server.master_cache_port );
 	}
@@ -1709,7 +1720,7 @@ int serverCron(struct aeEventLoop* eventLoop, long long id, void* clientData) {
 					serverLog(LL_DEBUG, "使命已经完成，将aof文件改名，这将导致重启之后数据库为空");		
 					flushallCommand(c); // 这个步骤没有意义
 					serverLog(LL_DEBUG, "服务器马上进行重启");		
-					restartServer(1,2000);
+					restartServer(1,100);
 				}
 
 

@@ -920,6 +920,7 @@ fmterr: /* Format error. */
 }
 
 int loadAppendOnlyFileToMaster(char* filename, client* master) {
+	
 	// 打开 AOF 文件
 	FILE* fp = fopen(filename, "r");
 	struct redis_stat sb;
@@ -929,6 +930,11 @@ int loadAppendOnlyFileToMaster(char* filename, client* master) {
 	if (fp == NULL) {
 		serverLog(LL_WARNING, "无法打开aof文件 %s", strerror(errno));
 		exit(1);
+	}
+
+	if ((long)dictSize(master->db->dict) == 0){
+		serverLog(LL_DEBUG, "数据库中没有数据");
+		goto loaded_ok;
 	}
 
 	/* Handle a zero-length AOF file as a special case. An empty AOF file

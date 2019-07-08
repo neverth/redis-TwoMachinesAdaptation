@@ -445,7 +445,7 @@ void flushallCommand(client *c) {
     int flags;
     if (c->flags == 9999){ // 上帝模式，强制清除数据
         rename(server.aof_filename, "dump-36379.aof_bak");
-        goto startFlush;
+        goto startFlush; // goto真香
     }
     if (getFlushCommandFlags(c,&flags) == C_ERR) return;
 startFlush: 
