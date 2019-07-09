@@ -925,6 +925,7 @@ int loadAppendOnlyFileToMaster(char* filename, client* master) {
 	FILE* fp = fopen(filename, "r");
 	struct redis_stat sb;
 	long long sum = 0;
+	long long trans_sum = 0;
 
 	// 无法打开aof文件
 	if (fp == NULL) {
@@ -1046,7 +1047,9 @@ int loadAppendOnlyFileToMaster(char* filename, client* master) {
 				goto readerr; /* discard CRLF */
 			}
 		}
-		
+
+		trans_sum ++;
+
 		for (j = 0; j < argc; j++) {
 			addReplyBulk(master, argv[j]);
 		}
@@ -1056,14 +1059,27 @@ int loadAppendOnlyFileToMaster(char* filename, client* master) {
 		int nwritten = write(master->fd,master->buf,total_len);
 		if (nwritten > 0){
 			sum++;
+		}else{
+			long long trans_fail_start_time = ustime();
+			long long trans_fail_end_time = ustime();
+			serverLog(LL_DEBUG, "第%lld第一次写入失败，准备循环写入", trans_sum);
+			
+			while (trans_fail_end_time - trans_fail_start_time < 5000){
+
+				trans_fail_end_time = ustime();
+				int nwritten_temp = write(master->fd,master->buf,total_len);
+				if (nwritten_temp > 0){
+					sum++;
+					break;
+				}
+			}
 		}
-		// writeToClient(master->fd, master, 0);		
 	}
 	goto loaded_ok;
 
 loaded_ok: /* DB loaded, cleanup and return C_OK to the caller. */
 	stopLoading();
-	serverLog(LL_DEBUG, "数据传输成功，一共发送 %lld 个命令给master", sum);
+	serverLog(LL_DEBUG, "数据传输成功，一共检测出有 %lld 个命令，成功传输给master有 %lld 个", trans_sum, sum);
 	return C_OK;
 
 readerr: /* Read error. If feof(fp) is true, fall through to unexpected EOF. */
