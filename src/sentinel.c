@@ -241,7 +241,6 @@ struct sentinelState {
     dict *masters;      /* Dictionary of master sentinelRedisInstances.
                            Key is the instance name, value is the
                            sentinelRedisInstance structure pointer. */
-    dict *master_cache; // 这个sentinel所给定的缓冲服务器
     int tilt;           /* Are we in TILT mode? */
     int running_scripts;    /* Number of scripts in execution right now. */
     mstime_t tilt_start_time;       /* When TITL started. */
@@ -3667,7 +3666,6 @@ void sentinelPublishCommand(client *c) {
 /* Is this instance down from our point of view? */
 void sentinelCheckSubjectivelyDown(sentinelRedisInstance *ri) {
     mstime_t elapsed = 0;
-    mstime_t down_after_period_now = 500; // 将由SENTINEL_SRI_NOW_DOWN_PERIOD代替
 
     if (ri->link->act_ping_time)
         elapsed = mstime() - ri->link->act_ping_time;
@@ -3742,6 +3740,7 @@ void sentinelCheckSubjectivelyDown(sentinelRedisInstance *ri) {
     }
     // 只对master进行判断
     if ((ri->flags & SRI_MASTER)){
+        if((ri->addr->port == 6379 ? 26379 : 26380) == server.port) return; 
         // 当断线时间超过 SENTINEL_SRI_NOW_DOWN_PERIOD时
         if ((elapsed > SENTINEL_SRI_NOW_DOWN_PERIOD)){
             if((ri->flags & SRI_N_DOWN) == 0){ // master不是SRI_N_DOWN状态，see SRI_N_DOWN
